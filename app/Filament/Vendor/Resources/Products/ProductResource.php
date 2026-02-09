@@ -10,7 +10,6 @@ use App\Filament\Vendor\Resources\Products\Tables\ProductsTable;
 use App\Models\Product;
 use BackedEnum;
 use Filament\Forms;
-use Filament\Resources\Form;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
@@ -49,9 +48,10 @@ class ProductResource extends Resource
                 Tables\Actions\DeleteBulkAction::make(),
             ]);
     }
-    public static function form(Form $form): Form
+    
+    public static function form(Schema $schema): Schema
     {
-        return $form
+        return $schema
             ->schema([
                 Forms\Components\TextInput::make('name')
                     ->required()
