@@ -56,7 +56,27 @@ use HasRoles;
             ->implode('');
     }
     public function vendor()
-{
-    return $this->hasOne(Vendor::class);
-}
+    {
+        return $this->hasOne(Vendor::class);
+    }
+
+    public function orders()
+    {
+        return $this->hasMany(Order::class);
+    }
+
+    public function carts()
+    {
+        return $this->hasMany(Cart::class);
+    }
+
+    public function wishlists()
+    {
+        return $this->hasMany(Wishlist::class);
+    }
+
+    public function reviews()
+    {
+        return $this->hasMany(ProductReview::class);
+    }
 }

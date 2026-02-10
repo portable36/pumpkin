@@ -5,221 +5,177 @@ namespace App\Services\Cart;
 use App\Models\Cart;
 use App\Models\CartItem;
 use App\Models\Product;
-use App\Models\ProductVariant;
-use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cookie;
 use Illuminate\Support\Facades\Session;
 
 class CartService
 {
-    protected ?Cart $cart = null;
+    protected $sessionKey = 'cart_session_id';
+    protected $cookieDuration = 43200; // 30 days in minutes
 
-    public function getCart(): Cart
+    public function getCart(): ?Cart
     {
-        if ($this->cart) {
-            return $this->cart;
+        if (Auth::check()) {
+            $cart = Cart::where('user_id', Auth::id())
+                ->where(function ($query) {
+                    $query->whereNull('expires_at')
+                        ->orWhere('expires_at', '>', now());
+                })
+                ->with('items.product')
+                ->first();
+
+            if (!$cart) {
+                $cart = $this->createCart();
+            }
+
+            return $cart;
         }
 
-        if (auth()->check()) {
-            $this->cart = Cart::firstOrCreate(
-                ['user_id' => auth()->id()],
-                ['expires_at' => now()->addDays(30)]
-            );
-            
-            // Merge session cart if exists
-            $this->mergeSessionCart();
-        } else {
-            $sessionId = Session::getId();
-            $this->cart = Cart::firstOrCreate(
-                ['session_id' => $sessionId],
-                ['expires_at' => now()->addDays(7)]
-            );
+        $sessionId = Session::get($this->sessionKey);
+
+        if ($sessionId) {
+            $cart = Cart::where('session_id', $sessionId)
+                ->where(function ($query) {
+                    $query->whereNull('expires_at')
+                        ->orWhere('expires_at', '>', now());
+                })
+                ->with('items.product')
+                ->first();
+
+            if ($cart) {
+                return $cart;
+            }
         }
 
-        // Clean expired items
-        $this->cart->items()->where('created_at', '<', now()->subDays(30))->delete();
-
-        return $this->cart;
+        return $this->createCart();
     }
 
-    public function addItem(int $productId, int $quantity = 1, ?int $variantId = null): CartItem
+    protected function createCart(): Cart
     {
-        $cart = $this->getCart();
-        
-        $product = Product::with('variants')->findOrFail($productId);
-        $variant = $variantId ? ProductVariant::findOrFail($variantId) : null;
+        $sessionId = Session::get($this->sessionKey);
 
-        // Validate stock
-        $availableStock = $variant ? $variant->stock : $product->stock;
-        if ($availableStock < $quantity) {
-            throw new \Exception('Insufficient stock available');
+        if (!$sessionId) {
+            $sessionId = uniqid('cart_', true);
+            Session::put($this->sessionKey, $sessionId);
         }
 
-        // Get price
-        $price = $variant ? $variant->price : $product->selling_price;
+        $data = [
+            'session_id' => $sessionId,
+            'expires_at' => now()->addDays(30),
+        ];
 
-        // Check if item already exists
-        $cartItem = $cart->items()
-            ->where('product_id', $productId)
+        if (Auth::check()) {
+            $data['user_id'] = Auth::id();
+            unset($data['session_id']);
+        }
+
+        return Cart::create($data);
+    }
+
+    public function addItem(Product $product, int $quantity = 1, ?int $variantId = null): CartItem
+    {
+        $cart = $this->getCart();
+
+        $existingItem = $cart->items()
+            ->where('product_id', $product->id)
             ->where('product_variant_id', $variantId)
             ->first();
 
-        if ($cartItem) {
-            $newQuantity = $cartItem->quantity + $quantity;
-            
-            if ($newQuantity > $availableStock) {
-                throw new \Exception('Cannot add more than available stock');
+        if ($existingItem) {
+            $newQuantity = $existingItem->quantity + $quantity;
+
+            if ($newQuantity > $product->stock) {
+                throw new \Exception('Not enough stock available');
             }
-            
-            $cartItem->update([
+
+            $existingItem->update([
                 'quantity' => $newQuantity,
-                'price' => $price
             ]);
-        } else {
-            $cartItem = $cart->items()->create([
-                'product_id' => $productId,
-                'product_variant_id' => $variantId,
-                'quantity' => $quantity,
-                'price' => $price
+
+            return $existingItem->fresh();
+        }
+
+        return $cart->items()->create([
+            'product_id' => $product->id,
+            'product_variant_id' => $variantId,
+            'quantity' => $quantity,
+            'price' => $product->selling_price,
+        ]);
+    }
+
+    public function updateQuantity(int $itemId, int $quantity): bool
+    {
+        $cart = $this->getCart();
+        $item = $cart->items()->findOrFail($itemId);
+
+        if ($quantity > $item->product->stock) {
+            throw new \Exception('Not enough stock available');
+        }
+
+        if ($quantity < 1) {
+            return $this->removeItem($itemId);
+        }
+
+        return $item->update(['quantity' => $quantity]);
+    }
+
+    public function removeItem(int $itemId): bool
+    {
+        $cart = $this->getCart();
+        return $cart->items()->where('id', $itemId)->delete();
+    }
+
+    public function clearCart(): bool
+    {
+        $cart = $this->getCart();
+        return $cart->items()->delete();
+    }
+
+    public function mergeCarts(int $userId, string $sessionId): void
+    {
+        $guestCart = Cart::where('session_id', $sessionId)->first();
+        $userCart = Cart::where('user_id', $userId)->first();
+
+        if (!$guestCart || $guestCart->items->isEmpty()) {
+            return;
+        }
+
+        if (!$userCart) {
+            $guestCart->update([
+                'user_id' => $userId,
+                'session_id' => null,
             ]);
+            return;
         }
 
-        return $cartItem;
-    }
+        foreach ($guestCart->items as $item) {
+            $existingItem = $userCart->items()
+                ->where('product_id', $item->product_id)
+                ->where('product_variant_id', $item->product_variant_id)
+                ->first();
 
-    public function updateQuantity(int $cartItemId, int $quantity): CartItem
-    {
-        $cart = $this->getCart();
-        $cartItem = $cart->items()->findOrFail($cartItemId);
-
-        if ($quantity <= 0) {
-            $cartItem->delete();
-            throw new \Exception('Item removed from cart');
-        }
-
-        // Validate stock
-        $variant = $cartItem->product_variant;
-        $product = $cartItem->product;
-        $availableStock = $variant ? $variant->stock : $product->stock;
-
-        if ($quantity > $availableStock) {
-            throw new \Exception('Requested quantity exceeds available stock');
-        }
-
-        $cartItem->update(['quantity' => $quantity]);
-
-        return $cartItem;
-    }
-
-    public function removeItem(int $cartItemId): void
-    {
-        $cart = $this->getCart();
-        $cart->items()->findOrFail($cartItemId)->delete();
-    }
-
-    public function clear(): void
-    {
-        $cart = $this->getCart();
-        $cart->items()->delete();
-    }
-
-    public function getItemCount(): int
-    {
-        return $this->getCart()->items()->sum('quantity');
-    }
-
-    public function getSubtotal(): float
-    {
-        return $this->getCart()->items()
-            ->get()
-            ->sum(fn($item) => $item->price * $item->quantity);
-    }
-
-    public function applyCoupon(string $couponCode): array
-    {
-        $coupon = \App\Models\Coupon::where('code', $couponCode)
-            ->where('is_active', true)
-            ->where(function ($query) {
-                $query->whereNull('starts_at')
-                    ->orWhere('starts_at', '<=', now());
-            })
-            ->where(function ($query) {
-                $query->whereNull('expires_at')
-                    ->orWhere('expires_at', '>=', now());
-            })
-            ->first();
-
-        if (!$coupon) {
-            throw new \Exception('Invalid or expired coupon code');
-        }
-
-        $subtotal = $this->getSubtotal();
-
-        if ($coupon->min_purchase_amount && $subtotal < $coupon->min_purchase_amount) {
-            throw new \Exception("Minimum purchase amount of {$coupon->min_purchase_amount} required");
-        }
-
-        // Check usage limits
-        if ($coupon->usage_limit && $coupon->usage_count >= $coupon->usage_limit) {
-            throw new \Exception('Coupon usage limit exceeded');
-        }
-
-        if (auth()->check() && $coupon->usage_limit_per_user) {
-            $userUsageCount = $coupon->usages()
-                ->where('user_id', auth()->id())
-                ->count();
-            
-            if ($userUsageCount >= $coupon->usage_limit_per_user) {
-                throw new \Exception('You have reached the usage limit for this coupon');
+            if ($existingItem) {
+                $existingItem->update([
+                    'quantity' => $existingItem->quantity + $item->quantity,
+                ]);
+            } else {
+                $userCart->items()->create([
+                    'product_id' => $item->product_id,
+                    'product_variant_id' => $item->product_variant_id,
+                    'quantity' => $item->quantity,
+                    'price' => $item->price,
+                ]);
             }
         }
 
-        // Calculate discount
-        $discount = $coupon->type === 'fixed' 
-            ? $coupon->value 
-            : ($subtotal * $coupon->value / 100);
-
-        if ($coupon->max_discount_amount) {
-            $discount = min($discount, $coupon->max_discount_amount);
-        }
-
-        return [
-            'coupon' => $coupon,
-            'discount' => $discount,
-            'total' => max(0, $subtotal - $discount)
-        ];
+        $guestCart->delete();
     }
 
-    protected function mergeSessionCart(): void
-    {
-        $sessionId = Session::getId();
-        $sessionCart = Cart::where('session_id', $sessionId)->first();
-
-        if ($sessionCart && $sessionCart->items()->exists()) {
-            foreach ($sessionCart->items as $item) {
-                try {
-                    $this->addItem($item->product_id, $item->quantity, $item->product_variant_id);
-                } catch (\Exception $e) {
-                    // Skip items that can't be added
-                }
-            }
-            
-            $sessionCart->delete();
-        }
-    }
-
-    public function recalculatePrices(): void
+    public function getCartCount(): int
     {
         $cart = $this->getCart();
-        
-        foreach ($cart->items as $item) {
-            $product = $item->product;
-            $variant = $item->product_variant;
-            
-            $currentPrice = $variant ? $variant->price : $product->selling_price;
-            
-            if ($item->price != $currentPrice) {
-                $item->update(['price' => $currentPrice]);
-            }
-        }
+        return $cart ? $cart->total_items : 0;
     }
 }
