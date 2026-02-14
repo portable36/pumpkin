@@ -17,14 +17,21 @@ class Kernel extends ConsoleKernel
             ->daily()
             ->runInBackground();
 
-        // Process vendor payouts monthly
+        // Process vendor payouts daily (checks configured day in settings)
         $schedule->command('vendors:process-payouts')
-            ->monthlyOn(1, '00:00')
-            ->runInBackground();
+            ->daily()
+            ->at('01:00')
+            ->runInBackground()
+            ->onSuccess(function () {
+                \Illuminate\Support\Facades\Log::info('Vendor payouts processed successfully');
+            })
+            ->onFailure(function () {
+                \Illuminate\Support\Facades\Log::error('Vendor payout processing failed');
+            });
 
-        // Queue job processing
-        $schedule->command('queue:work --max-time=3600 --stop-when-empty')
-            ->everyFiveMinutes()
+        // Queue job processing: use --once for shared-host friendly cron execution
+        $schedule->command('queue:work --once')
+            ->everyMinute()
             ->withoutOverlapping();
 
         // Clean up expired sessions daily

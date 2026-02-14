@@ -2,6 +2,122 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
+use App\Models\User;
+use App\Models\RefreshToken;
+
+class AuthController extends Controller
+{
+    public function register(Request $request)
+    {
+        $data = $request->validate([
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|unique:users,email',
+            'password' => 'required|string|min:6|confirmed',
+        ]);
+
+        $user = User::create([
+            'name' => $data['name'],
+            'email' => $data['email'],
+            'password' => Hash::make($data['password']),
+        ]);
+
+        return response()->json(['user' => $user], 201);
+    }
+
+    public function login(Request $request)
+    {
+        $data = $request->validate([
+            'email' => 'required|email',
+            'password' => 'required|string',
+        ]);
+
+        $user = User::where('email', $data['email'])->first();
+        if (!$user || !\Illuminate\Support\Facades\Hash::check($data['password'], $user->password)) {
+            return response()->json(['message' => 'Invalid credentials'], 401);
+        }
+
+        // create access token via Sanctum
+        $accessToken = $user->createToken('api')->plainTextToken;
+
+        // create refresh token (rotate)
+        $plainRefresh = Str::random(64);
+        $hash = hash('sha256', $plainRefresh);
+
+        RefreshToken::create([
+            'user_id' => $user->id,
+            'token_hash' => $hash,
+            'ip' => $request->ip(),
+            'user_agent' => substr($request->userAgent() ?? '', 0, 512),
+            'expires_at' => now()->addDays(30),
+        ]);
+
+        return response()->json([
+            'access_token' => $accessToken,
+            'refresh_token' => $plainRefresh,
+            'token_type' => 'Bearer',
+        ]);
+    }
+
+    public function refresh(Request $request)
+    {
+        $data = $request->validate(['refresh_token' => 'required|string']);
+        $hash = hash('sha256', $data['refresh_token']);
+
+        $rt = RefreshToken::where('token_hash', $hash)->first();
+        if (!$rt || ($rt->expires_at && $rt->expires_at->isPast())) {
+            return response()->json(['message' => 'Invalid refresh token'], 401);
+        }
+
+        $user = $rt->user;
+        if (!$user) {
+            return response()->json(['message' => 'Invalid token user'], 401);
+        }
+
+        // rotate: delete old refresh token, create new one
+        $rt->delete();
+        $newRefreshPlain = Str::random(64);
+        RefreshToken::create([
+            'user_id' => $user->id,
+            'token_hash' => hash('sha256', $newRefreshPlain),
+            'ip' => $request->ip(),
+            'user_agent' => substr($request->userAgent() ?? '', 0, 512),
+            'expires_at' => now()->addDays(30),
+        ]);
+
+        $accessToken = $user->createToken('api')->plainTextToken;
+
+        return response()->json([
+            'access_token' => $accessToken,
+            'refresh_token' => $newRefreshPlain,
+            'token_type' => 'Bearer',
+        ]);
+    }
+
+    public function logout(Request $request)
+    {
+        $user = $request->user();
+        if ($user) {
+            // Revoke current access token
+            $request->user()->currentAccessToken()->delete();
+        }
+
+        return response()->json(['message' => 'Logged out']);
+    }
+
+    // socialLogin stub - Socialite integration should be configured separately
+    public function socialLogin(Request $request)
+    {
+        return response()->json(['message' => 'Social login handled elsewhere'], 501);
+    }
+}
+<?php
+
+namespace App\Http\Controllers\Api;
+
 use App\Models\User;
 use App\Services\AuthService;
 use Illuminate\Http\Request;

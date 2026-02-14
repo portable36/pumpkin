@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>@yield('title', 'Pumpkin - Multivendor Marketplace')</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#ff6b35">
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -14,6 +16,7 @@
         .nav-links { display: flex; gap: 2rem; list-style: none; }
         .nav-links a { text-decoration: none; color: #333; font-weight: 500; transition: color 0.3s; }
         .nav-links a:hover { color: #ff6b35; }
+        .nav-links button:hover { color: #ff6b35; }
         .container { max-width: 1200px; margin: 0 auto; padding: 2rem 1rem; }
         .hero { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 4rem 1rem; text-align: center; }
         .hero h1 { font-size: 3rem; margin-bottom: 1rem; }
@@ -90,7 +93,12 @@
                 <li><a href="/cart">Cart ({{ session('cart_count', 0) }})</a></li>
                 @auth
                     <li><a href="/dashboard">Dashboard</a></li>
-                    <li><a href="/logout" onclick="return confirm('Logout?')">Logout</a></li>
+                    <li>
+                        <form action="/logout" method="POST" style="display: inline;" onsubmit="return confirm('Logout?')">
+                            @csrf
+                            <button type="submit" style="background: none; border: none; color: #333; font-weight: 500; cursor: pointer; font-family: inherit; font-size: inherit; padding: 0; transition: color 0.3s;">Logout</button>
+                        </form>
+                    </li>
                 @else
                     <li><a href="/login" class="btn">Login</a></li>
                 @endauth
@@ -119,4 +127,15 @@
         </div>
     </footer>
 </body>
+<script>
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+            navigator.serviceWorker.register('/sw.js').then(function(reg) {
+                console.log('Service worker registered.', reg);
+            }).catch(function(err) {
+                console.warn('Service worker registration failed:', err);
+            });
+        });
+    }
+</script>
 </html>

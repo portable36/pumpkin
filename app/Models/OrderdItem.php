@@ -5,7 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class OrderItem extends Model
+class OrderdItem extends Model
 {
     protected $table = 'order_items';
 
@@ -14,7 +14,7 @@ class OrderItem extends Model
         'product_id',
         'product_variant_id',
         'quantity',
-        'unit_price',
+        'price',
         'discount_amount',
         'tax_amount',
         'total_amount',
@@ -22,7 +22,7 @@ class OrderItem extends Model
     ];
 
     protected $casts = [
-        'unit_price' => 'float',
+        'price' => 'float',
         'discount_amount' => 'float',
         'tax_amount' => 'float',
         'total_amount' => 'float',

@@ -26,9 +26,18 @@ class CartController extends Controller
             sessionId: session()->getId()
         );
 
+        $items = $cart->items()->with('product')->get();
         $totals = $this->cartService->getCartTotals($cart);
 
-        return view('cart.index', compact('cart', 'totals'));
+        return view('cart.index', [
+            'cart' => $cart,
+            'items' => $items,
+            'subtotal' => $totals['subtotal'] ?? 0,
+            'shipping' => $totals['shipping'] ?? 0,
+            'tax' => $totals['tax'] ?? 0,
+            'coupon_discount' => $totals['discount'] ?? 0,
+            'total' => $totals['total'] ?? 0,
+        ]);
     }
 
     /**
@@ -65,13 +74,12 @@ class CartController extends Controller
      * Update item quantity
      */
     public function updateItem(Request $request)
-    {
-        $request->validate([
-            'item_id' => 'required|exists:cart_items,id',
-            'quantity' => 'required|integer|min:0|max:100',
+    {        $request->validate([
+            'cart_item_id' => 'required|exists:cart_items,id',
+            'quantity' => 'required|integer|min:1|max:100',
         ]);
 
-        $item = \App\Models\CartItem::findOrFail($request->item_id);
+        $item = \App\Models\CartItem::findOrFail($request->cart_item_id);
 
         if ($item->cart->user_id !== auth()->id() && $item->cart->session_id !== session()->getId()) {
             abort(403);
@@ -79,12 +87,7 @@ class CartController extends Controller
 
         $this->cartService->updateItemQuantity($item, $request->quantity);
 
-        $totals = $this->cartService->getCartTotals($item->cart);
-
-        return response()->json([
-            'message' => 'Cart updated',
-            'totals' => $totals,
-        ]);
+        return redirect()->route('cart.index')->with('success', 'Cart updated successfully!');
     }
 
     /**
@@ -93,10 +96,10 @@ class CartController extends Controller
     public function removeItem(Request $request)
     {
         $request->validate([
-            'item_id' => 'required|exists:cart_items,id',
+            'cart_item_id' => 'required|exists:cart_items,id',
         ]);
 
-        $item = \App\Models\CartItem::findOrFail($request->item_id);
+        $item = \App\Models\CartItem::findOrFail($request->cart_item_id);
 
         if ($item->cart->user_id !== auth()->id() && $item->cart->session_id !== session()->getId()) {
             abort(403);
@@ -104,7 +107,7 @@ class CartController extends Controller
 
         $this->cartService->removeItem($item);
 
-        return response()->json(['message' => 'Item removed from cart']);
+        return redirect()->route('cart.index')->with('success', 'Item removed from cart!');
     }
 
     /**
@@ -113,14 +116,18 @@ class CartController extends Controller
     public function applyCoupon(Request $request)
     {
         $request->validate([
-            'coupon_code' => 'required|string|size:6',
+            'coupon_code' => 'required|string|max:50',
         ]);
 
         $cart = $this->cartService->getOrCreateCart(auth()->id(), session()->getId());
 
         $result = $this->cartService->applyCoupon($cart, $request->coupon_code);
 
-        return response()->json($result);
+        if ($result['success'] ?? false) {
+            return redirect()->route('cart.index')->with('success', $result['message']);
+        }
+
+        return redirect()->route('cart.index')->with('error', $result['message'] ?? 'Invalid coupon code');
     }
 
     /**

@@ -86,6 +86,11 @@ class Vendor extends Model implements HasMedia
         return $this->hasOne(VendorBankDetail::class);
     }
 
+    public function documents(): HasMany
+    {
+        return $this->hasMany(VendorDocument::class);
+    }
+
     // Scopes
     public function scopeActive($query)
     {

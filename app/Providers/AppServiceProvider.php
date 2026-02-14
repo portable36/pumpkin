@@ -10,7 +10,13 @@ use App\Services\VendorService;
 use App\Services\ImageService;
 use App\Services\PaymentService;
 use App\Services\ShippingService;
+use App\Services\PayoutService;
+use App\Services\VendorOnboardingService;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Event;
+use App\Events\ReportRequested;
+use App\Jobs\GenerateReportJob;
+use Illuminate\Support\Facades\RateLimiter;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -50,6 +56,19 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(ShippingService::class, function ($app) {
             return new ShippingService();
         });
+
+        $this->app->singleton(PayoutService::class, function ($app) {
+            return new PayoutService();
+        });
+
+        $this->app->singleton(VendorOnboardingService::class, function ($app) {
+            return new VendorOnboardingService();
+        });
+
+        // Bind settings helper for facade access
+        $this->app->singleton('settings', function ($app) {
+            return new \App\Helpers\Settings();
+        });
     }
 
     /**
@@ -64,5 +83,15 @@ class AppServiceProvider extends ServiceProvider
 
         // Set up Spatie Media Library
         \Spatie\MediaLibrary\MediaCollections\Models\Media::class;
+
+        // API rate limiter
+        RateLimiter::for('api', function ($request) {
+            return \Illuminate\Cache\RateLimiting\Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+        });
+
+        // Wire report event to job
+        Event::listen(ReportRequested::class, function (ReportRequested $event) {
+            GenerateReportJob::dispatch($event->reportId)->onQueue('reports');
+        });
     }
 }

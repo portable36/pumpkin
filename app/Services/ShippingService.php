@@ -2,189 +2,281 @@
 
 namespace App\Services;
 
+use App\Models\Shipment;
 use App\Models\Order;
+use App\Models\Setting;
+use App\Services\Shipping\SteadyfastGateway;
+use App\Services\Shipping\PathaoGateway;
+use App\Services\Shipping\ShippingGatewayInterface;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * Main shipping service with multi-gateway support
+ * Handles shipment creation, tracking, and management
+ */
 class ShippingService
 {
     /**
-     * Process Pathao shipment
+     * @var ShippingGatewayInterface
      */
-    public function createPathaoShipment(Order $order): array
+    protected ShippingGatewayInterface $gateway;
+
+    /**
+     * @var string
+     */
+    protected string $activeGateway;
+
+    /**
+     * Initialize with default gateway
+     */
+    public function __construct()
+    {
+        // Prefer environment/config values, fall back to dynamic settings
+        $this->activeGateway = config('services.shipping.default_gateway') ?? Setting::get('shipping.default_gateway', 'steadfast');
+        $this->initializeGateway($this->activeGateway);
+    }
+
+    /**
+     * Initialize a specific gateway
+     */
+    public function initializeGateway(string $gateway): self
+    {
+        $this->activeGateway = $gateway;
+        
+        $this->gateway = match($gateway) {
+            Shipment::GATEWAY_STEADFAST => new SteadyfastGateway(),
+            Shipment::GATEWAY_PATHAO => new PathaoGateway(),
+            default => throw new \InvalidArgumentException("Unknown shipping gateway: {$gateway}"),
+        };
+
+        return $this;
+    }
+
+    /**
+     * Get the current active gateway
+     */
+    public function getGateway(): ShippingGatewayInterface
+    {
+        return $this->gateway;
+    }
+
+    /**
+     * Create a shipment from an order
+     */
+    public function shipOrder(Order $order, array $options = []): Shipment
     {
         try {
+            // Choose gateway
+            $gateway = $options['gateway'] ?? $this->activeGateway;
+            $this->initializeGateway($gateway);
+
+            // Check if gateway is enabled
+            if (!$this->isGatewayEnabled($gateway)) {
+                throw new \Exception("Shipping gateway '{$gateway}' is not enabled");
+            }
+
+            // Get shipping address
+            $address = $order->shippingAddress ?? $order->address;
+            if (!$address) {
+                throw new \Exception("Order does not have a shipping address");
+            }
+
+            // Prepare shipment data
             $shipmentData = [
                 'order_id' => $order->id,
-                'recipient_name' => $order->deliveryAddress->fullName(),
-                'recipient_phone' => $order->deliveryAddress->phone,
-                'recipient_address' => $order->deliveryAddress->fullAddress(),
-                'recipient_city' => $order->deliveryAddress->city,
-                'weight' => $this->calculateOrderWeight($order),
-                'cash_on_delivery' => $order->payment_method === 'cod' ? 1 : 0,
-                'items' => $this->formatOrderItems($order),
+                'user_id' => $order->user_id,
+                'gateway' => $gateway,
+                'weight' => $order->getTotalWeight() ?? 0.5,
+                'status' => Shipment::STATUS_PENDING,
+                'cost' => $options['cost'] ?? 0,
             ];
 
-            // Call Pathao API
-            $response = $this->makePathaoRequest('/aladdin/api/v2/orders/create/instant-pickup', $shipmentData);
+            // Create shipment record
+            $shipment = Shipment::create($shipmentData);
 
-            if (!isset($response['delivery_id'])) {
-                throw new \Exception('Failed to create shipment');
-            }
+            // Register shipment with gateway
+            $gatewayResponse = $this->gateway->registerShipment($shipment, $address);
 
-            $order->shipments()->create([
-                'tracking_number' => $response['delivery_id'],
-                'courier_name' => 'Pathao',
-                'status' => 'pending',
-                'carrier_response' => $response,
+            // Update shipment with gateway response
+            $shipment->update([
+                'tracking_number' => $gatewayResponse['tracking_number'] ?? null,
+                'status' => $gatewayResponse['status'] ?? Shipment::STATUS_PENDING,
+                'gateway_response' => $gatewayResponse['response'] ?? $gatewayResponse,
             ]);
 
-            return ['success' => true, 'tracking_id' => $response['delivery_id']];
-        } catch (\Exception $e) {
-            Log::error('Pathao shipment creation failed: ' . $e->getMessage());
-            return ['success' => false, 'message' => $e->getMessage()];
-        }
-    }
-
-    /**
-     * Process Steadfast shipment
-     */
-    public function createSteadfastShipment(Order $order): array
-    {
-        try {
-            $shipmentData = [
-                'invoice' => $order->order_number,
-                'recipient_name' => $order->deliveryAddress->fullName(),
-                'recipient_phone' => $order->deliveryAddress->phone,
-                'recipient_address' => $order->deliveryAddress->fullAddress(),
-                'recipient_city' => $order->deliveryAddress->city,
-                'recipient_zone' => $this->getZoneFromCity($order->deliveryAddress->city),
-                'weight' => $this->calculateOrderWeight($order),
-                'cod' => $order->payment_method === 'cod' ? 1 : 0,
-                'note' => $order->notes,
-            ];
-
-            $response = $this->makeSteadfastRequest('create_order', $shipmentData);
-
-            if ($response['status'] !== 200) {
-                throw new \Exception($response['message'] ?? 'Failed to create shipment');
-            }
-
-            $order->shipments()->create([
-                'tracking_number' => $response['tracking_code'],
-                'courier_name' => 'Steadfast',
-                'status' => 'pending',
-                'carrier_response' => $response,
+            // Log success
+            Log::info("Shipment created for order {$order->id}", [
+                'shipment_id' => $shipment->id,
+                'gateway' => $gateway,
+                'tracking_number' => $shipment->tracking_number ?? 'pending',
             ]);
 
-            return ['success' => true, 'tracking_id' => $response['tracking_code']];
+            return $shipment;
         } catch (\Exception $e) {
-            Log::error('Steadfast shipment creation failed: ' . $e->getMessage());
-            return ['success' => false, 'message' => $e->getMessage()];
+            Log::error("Failed to create shipment for order {$order->id}", [
+                'error' => $e->getMessage(),
+                'gateway' => $gateway ?? $this->activeGateway,
+            ]);
+            throw $e;
         }
     }
 
     /**
-     * Track shipment
+     * Get shipment tracking information
      */
-    public function trackShipment(string $trackingNumber, string $courier): array
+    public function trackShipment(Shipment $shipment): array
     {
-        try {
-            $response = match ($courier) {
-                'pathao' => $this->trackPathaoShipment($trackingNumber),
-                'steadfast' => $this->trackSteadfastShipment($trackingNumber),
-                default => throw new \Exception('Unknown courier'),
-            };
-
-            return ['success' => true, 'data' => $response];
-        } catch (\Exception $e) {
-            return ['success' => false, 'message' => $e->getMessage()];
-        }
-    }
-
-    /**
-     * Calculate order weight
-     */
-    private function calculateOrderWeight(Order $order): float
-    {
-        return $order->items->sum(function ($item) {
-            return ($item->product->weight ?? 0.5) * $item->quantity;
-        });
-    }
-
-    /**
-     * Format order items for shipment
-     */
-    private function formatOrderItems(Order $order): array
-    {
-        return $order->items->map(function ($item) {
+        if (!$shipment->isTrackable()) {
             return [
-                'item_type' => 1,
-                'quantity' => $item->quantity,
-                'weight' => $item->product->weight ?? 0.5,
+                'status' => $shipment->status,
+                'message' => 'Shipment is in final state',
             ];
-        })->toArray();
+        }
+
+        try {
+            $this->initializeGateway($shipment->gateway);
+            return $this->gateway->trackShipment($shipment);
+        } catch (\Exception $e) {
+            Log::error("Failed to track shipment {$shipment->id}", [
+                'error' => $e->getMessage(),
+            ]);
+            return ['error' => $e->getMessage()];
+        }
     }
 
     /**
-     * Get zone from city
+     * Cancel a shipment
      */
-    private function getZoneFromCity(string $city): string
+    public function cancelShipment(Shipment $shipment, string $reason = ''): bool
     {
-        // This would map cities to delivery zones
-        $zones = [
-            'Dhaka' => 1,
-            'Chittagong' => 2,
-            'Sylhet' => 3,
-        ];
+        try {
+            $this->initializeGateway($shipment->gateway);
+            
+            // Call gateway to cancel
+            $this->gateway->cancelShipment($shipment);
 
-        return $zones[$city] ?? 99;
+            // Update shipment status
+            $shipment->update([
+                'status' => Shipment::STATUS_CANCELLED,
+                'notes' => $reason,
+            ]);
+
+            Log::info("Shipment {$shipment->id} cancelled", ['reason' => $reason]);
+            return true;
+        } catch (\Exception $e) {
+            Log::error("Failed to cancel shipment {$shipment->id}", [
+                'error' => $e->getMessage(),
+            ]);
+            return false;
+        }
     }
 
     /**
-     * Make Pathao request
+     * Get rate quote from gateway
      */
-    private function makePathaoRequest(string $endpoint, array $data): array
-    {
-        // Implementation would call Pathao API
-        return [];
+    public function getRate(
+        string $district,
+        int $quantity = 1,
+        float $weight = 0.5,
+        string $gateway = null
+    ): array {
+        try {
+            $gateway = $gateway ?? $this->activeGateway;
+            
+            if (!$this->isGatewayEnabled($gateway)) {
+                return ['error' => "Gateway '{$gateway}' is not enabled"];
+            }
+
+            $this->initializeGateway($gateway);
+            return $this->gateway->calculateRate($district, $quantity, $weight);
+        } catch (\Exception $e) {
+            Log::error("Failed to get shipping rate", [
+                'error' => $e->getMessage(),
+                'gateway' => $gateway,
+            ]);
+            return ['error' => $e->getMessage()];
+        }
     }
 
     /**
-     * Make Steadfast request
+     * Get available gateways
      */
-    private function makeSteadfastRequest(string $endpoint, array $data): array
+    public function getAvailableGateways(): array
     {
-        // Implementation would call Steadfast API
-        return [];
+        $gateways = [];
+
+        if ($this->isGatewayEnabled(Shipment::GATEWAY_STEADFAST)) {
+            $gateways[] = Shipment::GATEWAY_STEADFAST;
+        }
+
+        if ($this->isGatewayEnabled(Shipment::GATEWAY_PATHAO)) {
+            $gateways[] = Shipment::GATEWAY_PATHAO;
+        }
+
+        return $gateways;
     }
 
     /**
-     * Track Pathao shipment
-     */
-    private function trackPathaoShipment(string $trackingNumber): array
-    {
-        // Implementation
-        return [];
-    }
-
-    /**
-     * Track Steadfast shipment
-     */
-    private function trackSteadfastShipment(string $trackingNumber): array
-    {
-        // Implementation
-        return [];
-    }
-
-    /**
-     * Calculate shipping cost
+     * Calculate shipping cost (simple local estimator)
      */
     public function calculateShippingCost(string $destination, float $weight): float
     {
-        // Simple shipping cost calculation
         $baseCost = 50; // Base shipping cost
         $perKgCost = 10; // Cost per kg
 
         return $baseCost + ($weight * $perKgCost);
+    }
+
+    /**
+     * Check if gateway is enabled
+     */
+    public function isGatewayEnabled(string $gateway): bool
+    {
+        $cfg = config("services.shipping.{$gateway}");
+        if (is_array($cfg) && array_key_exists('enabled', $cfg)) {
+            return (bool)$cfg['enabled'];
+        }
+
+        return Setting::get("shipping.gateways.{$gateway}.enabled", false);
+    }
+
+    /**
+     * Get gateway configuration
+     */
+    public function getGatewayConfig(string $gateway): array
+    {
+        $cfg = config("services.shipping.{$gateway}", []);
+
+        return [
+            'enabled' => $this->isGatewayEnabled($gateway),
+            'api_key' => $cfg['api_key'] ?? $cfg['client_id'] ?? Setting::get("shipping.gateways.{$gateway}.api_key"),
+            'api_secret' => $cfg['api_secret'] ?? $cfg['client_secret'] ?? Setting::get("shipping.gateways.{$gateway}.api_secret"),
+            'sandbox' => $cfg['sandbox'] ?? Setting::get("shipping.gateways.{$gateway}.sandbox", true),
+            'base_url' => ($cfg['sandbox'] ?? true) ? ($cfg['base_url_sandbox'] ?? null) : ($cfg['base_url_live'] ?? null),
+        ];
+    }
+
+    /**
+     * Find shipment by tracking number
+     */
+    public function findByTrackingNumber(string $trackingNumber): ?Shipment
+    {
+        return Shipment::where('tracking_number', $trackingNumber)->first();
+    }
+
+    /**
+     * Handle incoming webhook
+     */
+    public function handleWebhook(string $gateway, array $payload): bool
+    {
+        try {
+            $this->initializeGateway($gateway);
+            return $this->gateway->handleWebhook($payload);
+        } catch (\Exception $e) {
+            Log::error("Webhook handling failed for gateway: {$gateway}", [
+                'error' => $e->getMessage(),
+            ]);
+            return false;
+        }
     }
 }

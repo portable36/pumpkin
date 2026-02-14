@@ -69,6 +69,11 @@ class User extends Authenticatable
             ->withTimestamps();
     }
 
+    public function wishlists(): BelongsToMany
+    {
+        return $this->wishlist();
+    }
+
     public function reviews(): HasMany
     {
         return $this->hasMany(ProductReview::class);

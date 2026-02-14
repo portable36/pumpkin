@@ -1,0 +1,4 @@
+$user = \App\Models\User::first();
+$vendor = \App\Models\Vendor::create(['user_id' => $user->id, 'store_name' => 'Test Store', 'slug' => 'test-store', 'status' => 'approved']);
+$product = \App\Models\Product::create(['name' => 'Test Product', 'slug' => 'test-product', 'vendor_id' => $vendor->id, 'price' => 1000, 'sku' => 'TEST-001', 'description' => 'Test']);
+echo "Created vendor {$vendor->id} and product {$product->id}\n";
