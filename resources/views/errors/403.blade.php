@@ -1,0 +1,5 @@
+@extends('errors::minimal-layout')
+@section('title', '403 Forbidden')
+@section('code', '403')
+@section('name', 'Forbidden')
+@section('message', $exception->getMessage() ?: __('You are not authorized to access this page.'))

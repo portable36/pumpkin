@@ -1,0 +1,14 @@
+{
+    "name": "AdvanceReport",
+    "core": true,
+    "alias": "advancereport",
+    "description": "",
+    "keywords": [],
+    "priority": 60,
+    "providers": [],
+    "aliases": {},
+    "files": [],
+    "requires": [],
+    "translationSkipped": true,
+    "homePageViewSkipped": true
+}

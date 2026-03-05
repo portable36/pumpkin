@@ -1,0 +1,17 @@
+/* ------------------------------ ADMIN PANEL ------------------------------ */
+.form-label.require:after {
+    content: "*";
+    color: #ff4d4d;
+}
+.form-group .select2 {
+    z-index: 0 !important;
+}
+
+#topNav-v-pills-tabContent.tab-content {
+    padding-top: 0 !important;
+}
+
+/* hide export options */
+.carrier-list #dataTableBuilder_wrapper .btn-group > .btn-group {
+    display: none !important;
+}

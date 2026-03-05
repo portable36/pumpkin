@@ -1,0 +1,95 @@
+ /* Simple Clean Table Design */
+ #payment-table th {
+    background-color: #f8f9fa;
+    font-weight: 500;
+    font-size: 0.875rem;
+    color: #5f6368;
+    padding: 12px 16px;
+    padding-right: 35px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+#payment-table th.text-end {
+    text-align: right;
+}
+
+#payment-table td {
+    padding: 14px 16px;
+    padding-right: 35px;
+    border-bottom: 1px solid #e0e0e0;
+    font-size: 0.875rem;
+}
+
+#payment-table td.text-end {
+    text-align: right;
+}
+
+#payment-table tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+/* Table Footer Styling */
+#payment-table tfoot {
+    background-color: #f8f9fa;
+}
+
+#payment-table tfoot td {
+    padding: 14px 16px;
+    padding-right: 35px;
+    border-top: 2px solid #e0e0e0;
+    font-weight: 500;
+}
+
+#total-payment-amount {
+    color: #2c2c2c;
+    font-weight: 600;
+}
+
+/* Simple Input Styling */
+.amount-input {
+    text-align: right;
+    border: 1px solid #dadce0;
+    padding: 8px 12px;
+    font-size: 0.875rem;
+}
+
+.amount-input:focus {
+    border-color: #4285f4;
+    outline: none;
+    box-shadow: none;
+}
+
+/* Simple Notification */
+.payment-notification {
+    margin-bottom: 16px;
+}
+
+/* Input Wrapper */
+.input-wrapper {
+    display: block;
+}
+
+.input-error {
+    display: block;
+    line-height: 1.4;
+    font-size: 0.8125rem;
+    margin-top: 4px;
+}
+
+/* Simple Card */
+.card {
+    border: 1px solid #e0e0e0;
+    box-shadow: none;
+}
+
+.card-header {
+    background-color: white;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+/* Empty State */
+#payment-table tbody td[colspan] {
+    padding: 48px 1rem;
+    font-size: 0.875rem;
+    color: #757575;
+}

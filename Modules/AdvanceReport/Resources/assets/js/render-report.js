@@ -1,0 +1,3 @@
+'use strict';
+
+AdvanceReportShow.initializeStickyHeader();

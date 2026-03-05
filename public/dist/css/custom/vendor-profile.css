@@ -1,0 +1,24 @@
+/* Match button styling with input fields - similar to Browse button */
+#change-email-btn, #change-phone-btn {
+    height: 40px;
+    padding: 8px 20px;
+    font-size: 14px;
+    line-height: 1.5;
+    border: 2px solid #222;
+    border-left: none;
+    border-radius: 0 5px 5px 0;
+    background-color: #2c2c2c;
+    color: #fff;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    font-weight: 500;
+}
+
+#change-email-btn:hover, #change-phone-btn:hover {
+    background-color: #FCCA19;
+    border-color: #FCCA19;
+    color: #212529;
+}

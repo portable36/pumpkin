@@ -1,0 +1,9 @@
+.has-validation-error {
+    display: flex;
+    flex-direction: column;
+}
+
+.phone-area .error {
+    position: absolute;
+    top: 42px
+}
