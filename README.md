@@ -9,12 +9,12 @@
 
 Admin Credentials:</br>
 URLs:public/admin or public or public/login</br>
-UserName: sabbir.techvill@gmail.com</br>
+UserName: admin@pumpkin.com</br>
 Password: 12345678</br>
 </br>
 Customer Credentials:</br>
 URL:public/customer</br>
-UserName: sabbir@gmail.com</br>
+UserName: customer@pumpkin.com</br>
 Password: 123456</br>
 </br>
 Customer Registration</br>
