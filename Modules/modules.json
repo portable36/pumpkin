@@ -28,5 +28,6 @@
     "BulkPayment": true,
     "Inventory": true,
     "Delivery": true,
-    "AdvanceReport": true
+    "AdvanceReport": true,
+    "Pos": true
 }
